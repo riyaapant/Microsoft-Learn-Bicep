@@ -22,7 +22,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
-module appService 'modules/appService.bicep' = {
+module appService 'module/appService.bicep' = {
   name:'appService'
   params:{appServiceAppName:appServiceAppName
   location:location
