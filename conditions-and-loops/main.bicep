@@ -1,68 +1,63 @@
-@description('Location to deploy the azure resources in')
-param location string
+@description('Regions to deploy the resources')
+param locations array = [
+  'westus'
+  'eastus2'
+  'eastasia'
+]
 
 @secure()
-@description('Username for SQL admin')
+@description('Username for SQL Server admin')
 param sqlServerAdministratorLogin string
 
 @secure()
-@description('Password for SQL admin')
+@description('Password for SQL Server admin')
 param sqlServerAdministratorLoginPassword string
 
-@description('Name and tier of SQL Database SKU')
-param sqlDatabaseSku object ={
-  name:'Standard'
-  tier:'Standard'
-}
+@description('IP address range for all virtual networks to use')
+param virtualNetworkAddressPrefix string = '10.10.0.0/16'
 
-@description('The name of the environment: development or production')
-@allowed([
-  'Development'
-  'Production'
-])
-param environmentName string = 'Development'
-
-@description('The name of the audit storage account SKU')
-param auditStorageAccountSkuName string = 'Standard_LRS'
-
-var sqlServerName = 'rp${location}${uniqueString(resourceGroup().id)}'
-var sqlDatabaseName = 'RiyaDB'
-
-var auditingEnabled = environmentName == 'Production'
-var auditStorageAccountName = take('rpaudit${location}${uniqueString(resourceGroup().id)}',24)
-
-resource sqlServer 'Microsoft.Sql/servers@2024-05-01-preview'={
-  name: sqlServerName
-  location:location
-  properties:{
-    administratorLogin: sqlServerAdministratorLogin
-    administratorLoginPassword:sqlServerAdministratorLoginPassword
+@description('Name and IP address range for each subnet in the vnets')
+param subnets array = [
+  {
+    name: 'frontend'
+    ipAddressRange: '10.10.5.0/24'
   }
-}
-
-resource sqlDatabase 'Microsoft.Sql/servers/databases@2024-05-01-preview' = {
-  parent: sqlServer
-  name: sqlDatabaseName
-  location: location
-  sku: sqlDatabaseSku
-}
-
-resource auditStorageAccount 'Microsoft.Storage/storageAccounts@2024-01-01' = if (auditingEnabled) {
-  name: auditStorageAccountName
-  location: location
-  sku: {
-    name: auditStorageAccountSkuName
+  {
+    name: 'backend'
+    ipAddressRange: '10.10.10.0/24'
   }
-  kind: 'StorageV2'
-}
+]
 
-
-resource sqlServerAudit 'Microsoft.Sql/servers/auditingSettings@2024-05-01-preview' = if (auditingEnabled) {
-  parent: sqlServer
-  name: 'default'
+var subnetProperties = [for subnet in subnets: {
+  name: subnet.name
   properties: {
-    state: 'Enabled'
-    storageEndpoint: environmentName == 'Production' ? auditStorageAccount.properties.primaryEndpoints.blob : ''
-    storageAccountAccessKey: environmentName == 'Production' ? auditStorageAccount.listKeys().keys[0].value : ''
+    addressPrefix: subnet.ipAddressRange
   }
-}
+}]
+
+module databases 'modules/database.bicep' = [for location in locations: {
+  name:'database-${location}'
+  params:{
+    location:location
+    sqlServerAdministratorLogin: sqlServerAdministratorLogin
+    sqlServerAdministratorLoginPassword: sqlServerAdministratorLoginPassword
+  }
+}]
+
+resource virtualNetworks 'Microsoft.Network/virtualNetworks@2024-05-01' = [for location in locations: {
+  name:'rp-${location}'
+  location: location
+  properties: {
+    addressSpace:{
+      addressPrefixes:[virtualNetworkAddressPrefix]
+    }
+    subnets: subnetProperties
+  }
+}]
+
+
+output serverInfo array = [for i in range(0, length(locations)): {
+  name: databases[i].outputs.serverName
+  location: databases[i].outputs.location
+  fullyQualifiedDomainName: databases[i].outputs.serverFullyQualifiedDomainName
+}]
